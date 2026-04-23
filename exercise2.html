@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes"/>
+  <title>Exercise 2 – Humanoid Robot</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: monospace; }
+    canvas { display: block; }
+    #info {
+      position: absolute; top: 12px; left: 12px;
+      color: #ffffffcc; background: #00000066;
+      padding: 8px 14px; border-radius: 6px;
+      font-size: 13px; line-height: 1.6; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// =============================================================================
+// Exercise 2 – Humanoid Robot (Hierarchical Modelling)
+// =============================================================================
+// KEY CONCEPT: The Scene Graph
+//
+// In Three.js every Object3D can have children. When we transform a parent
+// (move / rotate / scale it) all its children follow automatically.
+//
+// We exploit this to build a robot body where rotating the shoulder
+// automatically swings the entire arm, and rotating the elbow only affects
+// the forearm and hand.
+//
+// Hierarchy we will build:
+//
+//  robotRoot  (Group – master position/rotation of whole robot)
+//  ├── leftLeg  (Mesh)
+//  ├── rightLeg (Mesh)
+//  ├── hips     (Mesh)
+//  ├── torso    (Mesh)
+//  ├── head     (Mesh)
+//  ├── leftShoulderPivot  (Group – pivot AT the shoulder joint)
+//  │   └── leftUpperArm   (Mesh)
+//  │       └── leftElbowPivot  (Group – pivot AT the elbow joint)
+//  │           └── leftForearm  (Mesh)
+//  │               └── leftHandPivot  (Group)
+//  │                   └── leftHand   (Mesh)
+//  └── rightShoulderPivot (Group)
+//      └── rightUpperArm  (Mesh)
+//          └── rightElbowPivot (Group)
+//              └── rightForearm (Mesh)
+//                  └── rightHandPivot (Group)
+//                      └── rightHand  (Mesh)
+// =============================================================================
+
+import * as THREE from 'three';
+
+// First, we import the shared kitchen environment.
+// scene already contains the room, counter, objects and lights.
+import { scene, camera, renderer, controls, gui, makeMat } from './js/sceneSetup.js';
+
+// =============================================================================
+// DIMENSIONS  – centralise all sizes so changes stay consistent
+// =============================================================================
+const D = {
+  // Legs
+  legW: 0.18, legH: 0.55, legD: 0.18,
+  // Hips (connecting block between legs and torso)
+  hipsW: 0.52, hipsH: 0.18, hipsD: 0.22,
+  // Torso
+  torsoW: 0.58, torsoH: 0.65, torsoD: 0.28,
+  // Head
+  headW: 0.32, headH: 0.32, headD: 0.28,
+  // Upper arm
+  uArmW: 0.13, uArmH: 0.38, uArmD: 0.13,
+  // Forearm
+  fArmW: 0.11, fArmH: 0.34, fArmD: 0.11,
+  // Hand
+  handW: 0.14, handH: 0.12, handD: 0.08,
+};
+
+// =============================================================================
+// MATERIALS
+// =============================================================================
+const robotMat   = makeMat(0x8ecae6, 0.4, 0.6); // light-blue metallic body
+const jointMat   = makeMat(0x219ebc, 0.3, 0.8); // darker blue for joints/pivots
+const detailMat  = makeMat(0x023047, 0.5, 0.3); // dark navy for accents
+const eyeMat     = makeMat(0xffb703, 0.2, 0.0); // glowing yellow eyes
+
+// =============================================================================
+// HELPER – create a box mesh with shadows enabled
+// =============================================================================
+function box(w, h, d, mat) {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  mesh.castShadow    = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+// =============================================================================
+// ROBOT ROOT
+// =============================================================================
+// All robot parts are children (direct or indirect) of this single Group.
+// Moving robotRoot moves the entire robot at once.
+const robotRoot = new THREE.Group();
+
+// Position the robot BEHIND the counter, centred on it.
+// Counter is at Z = -2, depth 1.2, so its back edge is at Z ≈ -2.6.
+// We place the robot at Z = -3.1 so it stands just behind the counter.
+robotRoot.position.set(0, 0, -3.1);
+scene.add(robotRoot);
+
+// =============================================================================
+// LEGS
+// =============================================================================
+// Each leg is a simple box. They sit on the floor (Y = 0) and reach up to the
+// hips. Their Y position is half their height so the bottom touches Y = 0.
+
+const leftLeg  = box(D.legW, D.legH, D.legD, robotMat);
+const rightLeg = box(D.legW, D.legH, D.legD, robotMat);
+
+// Offset left/right from the robot centre
+leftLeg.position.set(-0.17, D.legH / 2, 0);
+rightLeg.position.set( 0.17, D.legH / 2, 0);
+
+robotRoot.add(leftLeg, rightLeg);
+
+// Knee detail (a slightly darker band across the leg)
+function addKneeDetail(leg) {
+  const knee = box(D.legW + 0.01, 0.06, D.legD + 0.01, jointMat);
+  knee.position.y = 0.05; // slightly above centre
+  leg.add(knee);
+}
+addKneeDetail(leftLeg);
+addKneeDetail(rightLeg);
+
+// =============================================================================
+// HIPS
+// =============================================================================
+// Sits on top of the legs, connecting them to the torso.
+const hipsY = D.legH; // top of the legs
+const hips  = box(D.hipsW, D.hipsH, D.hipsD, jointMat);
+hips.position.set(0, hipsY + D.hipsH / 2, 0);
+robotRoot.add(hips);
+
+// =============================================================================
+// TORSO
+// =============================================================================
+const torsoY = hipsY + D.hipsH; // top of the hips
+const torso  = box(D.torsoW, D.torsoH, D.torsoD, robotMat);
+torso.position.set(0, torsoY + D.torsoH / 2, 0);
+robotRoot.add(torso);
+
+// Chest panel detail
+const chestPanel = box(0.28, 0.22, 0.02, detailMat);
+chestPanel.position.set(0, 0.05, D.torsoD / 2 + 0.01);
+torso.add(chestPanel);
+
+// =============================================================================
+// HEAD
+// =============================================================================
+const headY = torsoY + D.torsoH; // top of the torso
+const head  = box(D.headW, D.headH, D.headD, robotMat);
+head.position.set(0, headY + D.headH / 2 + 0.04, 0); // +0.04 neck gap
+robotRoot.add(head);
+
+// Eyes – two small yellow boxes on the front face of the head
+const eyeL = box(0.07, 0.045, 0.02, eyeMat);
+const eyeR = box(0.07, 0.045, 0.02, eyeMat);
+eyeL.position.set(-0.08, 0.04, D.headD / 2 + 0.01);
+eyeR.position.set( 0.08, 0.04, D.headD / 2 + 0.01);
+head.add(eyeL, eyeR);
+
+// Neck connector
+const neck = box(0.14, 0.08, 0.14, jointMat);
+neck.position.set(0, headY + 0.04, 0);
+robotRoot.add(neck);
+
+// =============================================================================
+// ARM BUILDER (reusable function for left & right)
+// =============================================================================
+//
+// The trick with pivot groups:
+//   A Mesh's geometry is centred at its local origin (0,0,0) by default.
+//   If we rotate a mesh, it spins around its own centre not around a joint.
+//   To rotate around a JOINT (e.g. the shoulder), we:
+//     1. Create an empty Group positioned AT the joint.
+//     2. Add the arm mesh as a child, offset so the TOP of the arm is at Y=0.
+//     3. Rotating the Group now pivots the arm around the joint. 
+//
+//  shoulderPivot (Group) ← position = shoulder joint location
+//    └── upperArm (Mesh) ← position.y = -halfHeight  (top of arm at Y=0)
+//        └── elbowPivot (Group) ← position.y = -fullHeight (at elbow)
+//            └── forearm (Mesh) ← position.y = -halfHeight
+//                └── handPivot (Group)
+//                    └── hand (Mesh)
+
+function buildArm(side) {
+  // side = +1 for right arm, -1 for left arm (mirrors X position)
+  const shoulderX = side * (D.torsoW / 2 + D.uArmW / 2 + 0.02);
+  const shoulderY = torsoY + D.torsoH - 0.08; // near top of torso
+
+  // ── Shoulder pivot ────────────────────────────────────────────────────────
+  // This Group sits AT the shoulder joint. Rotating it swings the whole arm.
+  const shoulderPivot = new THREE.Group();
+  shoulderPivot.position.set(shoulderX, shoulderY, 0);
+  robotRoot.add(shoulderPivot);
+
+  // Shoulder ball (visual joint sphere)
+  const shoulderBall = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 12, 8), jointMat
+  );
+  shoulderBall.castShadow = true;
+  shoulderPivot.add(shoulderBall);
+
+  // ── Upper arm ─────────────────────────────────────────────────────────────
+  // Offset -Y by half height so the TOP of the upper arm sits at Y=0 (the pivot).
+  const upperArm = box(D.uArmW, D.uArmH, D.uArmD, robotMat);
+  upperArm.position.y = -D.uArmH / 2;
+  shoulderPivot.add(upperArm);
+
+  // ── Elbow pivot ───────────────────────────────────────────────────────────
+  // Placed at the BOTTOM of the upper arm (Y = -D.uArmH relative to shoulder).
+  // It is a child of upperArm, so it follows the shoulder rotation.
+  const elbowPivot = new THREE.Group();
+  elbowPivot.position.y = -D.uArmH / 2; // bottom of upper arm
+  upperArm.add(elbowPivot);
+
+  // Elbow ball
+  const elbowBall = new THREE.Mesh(
+    new THREE.SphereGeometry(0.07, 12, 8), jointMat
+  );
+  elbowBall.castShadow = true;
+  elbowPivot.add(elbowBall);
+
+  // ── Forearm ───────────────────────────────────────────────────────────────
+  const forearm = box(D.fArmW, D.fArmH, D.fArmD, robotMat);
+  forearm.position.y = -D.fArmH / 2;
+  elbowPivot.add(forearm);
+
+  // ── Wrist pivot ───────────────────────────────────────────────────────────
+  const handPivot = new THREE.Group();
+  handPivot.position.y = -D.fArmH / 2;
+  forearm.add(handPivot);
+
+  // Wrist ball
+  const wristBall = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 12, 8), jointMat
+  );
+  wristBall.castShadow = true;
+  handPivot.add(wristBall);
+
+  // ── Hand / gripper ────────────────────────────────────────────────────────
+  const hand = box(D.handW, D.handH, D.handD, detailMat);
+  hand.position.y = -D.handH / 2;
+  handPivot.add(hand);
+
+  // Two finger stubs on the hand
+  [-0.04, 0.04].forEach(fx => {
+    const finger = box(0.03, 0.07, 0.03, jointMat);
+    finger.position.set(fx, -D.handH / 2 - 0.035, 0);
+    hand.add(finger);
+  });
+
+  // ── Axes helpers (for debugging – shows X/Y/Z at each joint) ─────────────
+  // Red = X, Green = Y, Blue = Z
+  // Remove or comment these out once you are confident the hierarchy is correct.
+  shoulderPivot.add(new THREE.AxesHelper(0.15));
+  elbowPivot.add(new THREE.AxesHelper(0.12));
+  handPivot.add(new THREE.AxesHelper(0.09));
+
+  // Return the pivots so the animate loop can rotate them
+  return { shoulderPivot, elbowPivot, handPivot };
+}
+
+// Build both arms.  Pass +1 for right, -1 for left.
+const leftArm  = buildArm(-1);
+const rightArm = buildArm( 1);
+
+// =============================================================================
+// AXES HELPER on the robot root
+// =============================================================================
+// Shows the overall robot origin: useful to understand where (0,0,0) is.
+robotRoot.add(new THREE.AxesHelper(0.3));
+
+// =============================================================================
+// GUI – manual joint controls for debugging the hierarchy
+// =============================================================================
+// lil-gui binds directly to an object's property.
+// We create a plain params object and apply its values in the animate loop.
+const params = {
+  // Left arm
+  leftShoulder:  0,
+  leftElbow:     0,
+  // Right arm
+  rightShoulder: 0,
+  rightElbow:    0,
+  // Robot root
+  robotRotY:     0,
+};
+
+const robotFolder = gui.addFolder('Robot joints');
+robotFolder.add(params, 'leftShoulder',  -Math.PI, Math.PI, 0.01).name('Left shoulder');
+robotFolder.add(params, 'leftElbow',      0,        Math.PI, 0.01).name('Left elbow');
+robotFolder.add(params, 'rightShoulder', -Math.PI, Math.PI, 0.01).name('Right shoulder');
+robotFolder.add(params, 'rightElbow',     0,        Math.PI, 0.01).name('Right elbow');
+robotFolder.add(params, 'robotRotY',     -Math.PI, Math.PI, 0.01).name('Robot Y rotation');
+robotFolder.open();
+
+// =============================================================================
+// RENDER LOOP
+// =============================================================================
+// The animate function runs ~60 times per second.
+// Each frame we:
+//   1. Apply GUI slider values to joint rotations
+//   2. Add a gentle automatic wave so the scene isn't static
+//   3. Tell the renderer to draw the scene from the camera's point of view
+
+function animate() {
+  renderer.setAnimationLoop(animate);
+  controls.update();
+
+  const t = Date.now() * 0.001; // time in seconds, increases smoothly
+
+  // ── Automatic idle animation (FK – Forward Kinematics) ──────────────────
+  // Math.sin(t) oscillates between -1 and +1 smoothly.
+  // Multiplying by an angle controls the range of the swing.
+
+  // Right arm: slow chopping motion (reaching toward counter)
+  rightArm.shoulderPivot.rotation.x = params.rightShoulder + Math.sin(t * 0.8) * 0.5 - 0.6;
+  rightArm.elbowPivot.rotation.x    = params.rightElbow    + Math.sin(t * 0.8 + 1) * 0.3 + 0.4;
+
+  // Left arm: mirrored slower wave
+  leftArm.shoulderPivot.rotation.x  = params.leftShoulder  + Math.sin(t * 0.6 + 0.5) * 0.4 - 0.5;
+  leftArm.elbowPivot.rotation.x     = params.leftElbow     + Math.sin(t * 0.6 + 1.5) * 0.25 + 0.35;
+
+  // Slight body sway
+  robotRoot.rotation.y = params.robotRotY + Math.sin(t * 0.4) * 0.06;
+
+  renderer.render(scene, camera);
+}
+animate();
+
+</script>
+</body>
+</html>

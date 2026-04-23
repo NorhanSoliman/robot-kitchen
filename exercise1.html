@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes"/>
+  <title>Exercise 1 – Kitchen Environment</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: monospace; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+
+<!--
+  We load Three.js and its addons directly from the CDN using ES-module imports.
+  This keeps everything in one HTML file
+-->
+<script type="importmap">
+{
+  "imports": {
+    "three":              "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/":      "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// ─────────────────────────────────────────────────────────────────────────────
+// IMPORTS
+// ─────────────────────────────────────────────────────────────────────────────
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+// lil-gui is used in later exercises too, good habit to import it now
+import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.19/+esm';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. SCENE, CAMERA, RENDERER
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The Scene is the container for everything: meshes, lights, cameras.
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb); // sky-blue background
+scene.fog = new THREE.Fog(0x87ceeb, 10, 30);  // subtle depth fog
+
+// Perspective camera: fov, aspect ratio, near clip, far clip
+const camera = new THREE.PerspectiveCamera(
+  60,                                    // field of view (degrees)
+  window.innerWidth / window.innerHeight,// aspect ratio
+  0.1,                                   // near clipping plane
+  100                                    // far clipping plane
+);
+// Position the camera so we look into the kitchen from the front
+camera.position.set(0, 2.5, 5);
+
+// WebGL renderer – we attach it to the document body
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+
+// ── Shadow maps ──────────────────────────────────────────────────────────────
+// Enabling shadow maps lets lights cast shadows onto surfaces.
+// PCFSoftShadowMap gives smoother shadow edges than the default.
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+document.body.appendChild(renderer.domElement);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. ORBIT CONTROLS  (lets the user spin / zoom the camera with the mouse)
+// ─────────────────────────────────────────────────────────────────────────────
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1, 0); // look at a point at counter height
+controls.enableDamping = true; // smooth inertia
+controls.dampingFactor = 0.08;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. HELPER FUNCTION – create a MeshStandardMaterial easily
+// ─────────────────────────────────────────────────────────────────────────────
+// MeshStandardMaterial is a physically-based material that reacts to lights.
+// We will use it for everything so our scene looks consistent.
+function makeMat(color, roughness = 0.8, metalness = 0.0) {
+  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. ROOM STRUCTURE
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Floor ────────────────────────────────────────────────────────────────────
+// PlaneGeometry is a flat rectangle. By default it faces +Z, so we rotate it
+// to lie flat on the XZ plane (facing up, i.e., –90° around X).
+const floorGeo  = new THREE.PlaneGeometry(12, 12);
+// Checkerboard-like tile look via a repeated vertex color trick isn't trivial,
+// so we use a light-grey color and slight roughness to suggest ceramic tiles.
+const floorMat  = makeMat(0xd6cfc7, 0.9, 0.0);
+const floor     = new THREE.Mesh(floorGeo, floorMat);
+floor.rotation.x = -Math.PI / 2; // rotate so it lies flat
+floor.receiveShadow = true;       // the floor must receive shadows
+scene.add(floor);
+
+// ── Back wall ────────────────────────────────────────────────────────────────
+// A simple box used as a wall panel behind the counter.
+const wallMat  = makeMat(0xf5f0ea, 0.95, 0.0); // off-white plaster
+
+const backWall = new THREE.Mesh(new THREE.BoxGeometry(12, 5, 0.2), wallMat);
+backWall.position.set(0, 2.5, -3.5);
+backWall.receiveShadow = true;
+scene.add(backWall);
+
+// ── Left wall ────────────────────────────────────────────────────────────────
+const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.2, 5, 12), wallMat);
+leftWall.position.set(-6, 2.5, 0);
+leftWall.receiveShadow = true;
+scene.add(leftWall);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. KITCHEN COUNTER (WORKPLAN)
+// ─────────────────────────────────────────────────────────────────────────────
+// The counter is a tall box.  We'll give it a marble-like light grey top.
+
+// Counter body (dark wood-like)
+const counterBodyMat = makeMat(0x5c3d2e, 0.85, 0.0);
+const counterBody    = new THREE.Mesh(
+  new THREE.BoxGeometry(5, 0.85, 1.2),
+  counterBodyMat
+);
+counterBody.position.set(0, 0.425, -2);
+counterBody.castShadow    = true;
+counterBody.receiveShadow = true;
+scene.add(counterBody);
+
+// Counter top (marble – light colour, low roughness gives slight sheen)
+const counterTopMat = makeMat(0xe8e0d5, 0.3, 0.1);
+const counterTop    = new THREE.Mesh(
+  new THREE.BoxGeometry(5.1, 0.06, 1.3),
+  counterTopMat
+);
+counterTop.position.set(0, 0.88, -2);
+counterTop.castShadow    = true;
+counterTop.receiveShadow = true;
+scene.add(counterTop);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. OBJECTS ON THE COUNTER
+// ─────────────────────────────────────────────────────────────────────────────
+// We place a Cup (CylinderGeometry) and a Plate (flat CylinderGeometry).
+// Both must cast shadows.
+
+const counterSurfaceY = 0.91; // just above the counter top
+
+// ── Cup ──────────────────────────────────────────────────────────────────────
+// CylinderGeometry(radiusTop, radiusBottom, height, segments)
+// A cup is slightly wider at the top than the bottom.
+const cupMat = makeMat(0x3a86ff, 0.6, 0.1);
+const cup    = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.09, 0.07, 0.18, 24),
+  cupMat
+);
+cup.position.set(-0.8, counterSurfaceY + 0.09, -2);
+cup.castShadow = true;
+scene.add(cup);
+
+// Cup handle – a thin torus rotated sideways
+const handleMat  = makeMat(0x3a86ff, 0.6, 0.1);
+const cupHandle  = new THREE.Mesh(
+  new THREE.TorusGeometry(0.055, 0.012, 8, 20, Math.PI),
+  handleMat
+);
+cupHandle.position.set(-0.72, counterSurfaceY + 0.09, -2);
+cupHandle.rotation.y = Math.PI / 2;
+cupHandle.castShadow = true;
+scene.add(cupHandle);
+
+// ── Plate ─────────────────────────────────────────────────────────────────────
+// A flat cylinder makes a convincing plate.
+const plateMat = makeMat(0xfff1e6, 0.4, 0.05);
+const plate    = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.2, 0.19, 0.025, 40),
+  plateMat
+);
+plate.position.set(0.5, counterSurfaceY + 0.0125, -2);
+plate.castShadow    = true;
+plate.receiveShadow = true;
+scene.add(plate);
+
+// A small item on the plate (a flattened sphere for a bread roll)
+const rollMat = makeMat(0xd4a56a, 0.9, 0.0);
+const roll    = new THREE.Mesh(
+  new THREE.SphereGeometry(0.09, 16, 10),
+  rollMat
+);
+roll.scale.y = 0.65;
+roll.position.set(0.5, counterSurfaceY + 0.07, -2);
+roll.castShadow = true;
+scene.add(roll);
+
+// ── Cutting board ─────────────────────────────────────────────────────────────
+// A thin flat box to add visual interest to the counter
+const boardMat = makeMat(0x9c6b3c, 0.95, 0.0);
+const board    = new THREE.Mesh(
+  new THREE.BoxGeometry(0.45, 0.018, 0.3),
+  boardMat
+);
+board.position.set(-0.15, counterSurfaceY + 0.009, -1.75);
+board.castShadow    = true;
+board.receiveShadow = true;
+scene.add(board);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. LIGHTING
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Ambient light ─────────────────────────────────────────────────────────────
+// Provides a base level of illumination so nothing is pitch black.
+// It has no direction and casts no shadows.
+const ambientLight = new THREE.AmbientLight(0xfff5e4, 0.5);
+scene.add(ambientLight);
+
+// ── Ceiling / window light (SpotLight) ────────────────────────────────────────
+// A SpotLight positioned above the counter simulates a kitchen ceiling lamp.
+const spotLight       = new THREE.SpotLight(0xfff8e7, 60);
+spotLight.position.set(0, 4.5, -1.5);
+spotLight.target.position.set(0, 0, -2); // aim at the counter surface
+scene.add(spotLight);
+scene.add(spotLight.target);
+
+spotLight.castShadow            = true;
+spotLight.shadow.mapSize.width  = 2048; // higher = crisper shadow edges
+spotLight.shadow.mapSize.height = 2048;
+spotLight.shadow.bias           = -0.001; // avoids "shadow acne" artefacts
+spotLight.angle                 = Math.PI / 5; // cone angle
+spotLight.penumbra              = 0.35;         // soft edge
+
+// A small mesh to visualise the lamp fitting on the ceiling
+const lampMat  = makeMat(0xffffff, 0.3, 0.8);
+const lampMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 0.18, 16), lampMat);
+lampMesh.position.set(0, 4.4, -1.5);
+scene.add(lampMesh);
+
+// ── Subtle fill light from the window side ────────────────────────────────────
+// A dim DirectionalLight from the left simulates window light.
+const fillLight = new THREE.DirectionalLight(0xadd8e6, 0.4);
+fillLight.position.set(-5, 3, 2);
+scene.add(fillLight);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. lil-gui  – A lightweight debug UI
+// ─────────────────────────────────────────────────────────────────────────────
+// lil-gui lets us tweak values at runtime without reloading the page.
+// Here we control the spotlight intensity and ambient brightness.
+const gui = new GUI({ title: 'Scene controls' });
+
+const lightFolder = gui.addFolder('Lighting');
+lightFolder.add(ambientLight, 'intensity', 0, 2, 0.01).name('Ambient intensity');
+lightFolder.add(spotLight,    'intensity', 0, 150, 1).name('Spot intensity');
+lightFolder.add(spotLight,    'penumbra',  0, 1,   0.01).name('Spot penumbra');
+lightFolder.open();
+
+const matFolder = gui.addFolder('Counter top material');
+matFolder.add(counterTopMat, 'roughness',  0, 1, 0.01).name('Roughness');
+matFolder.add(counterTopMat, 'metalness',  0, 1, 0.01).name('Metalness');
+matFolder.open();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. WINDOW RESIZE HANDLER
+// ─────────────────────────────────────────────────────────────────────────────
+// When the browser window resizes we must update the camera aspect ratio
+// and the renderer size to avoid a stretched/squashed image.
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 10. RENDER LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+// requestAnimationFrame tells the browser to call our function before the next
+// screen repaint (~60 times per second). This is how we create smooth animation.
+function animate() {
+  renderer.setAnimationLoop(animate); // XR-friendly version of rAF
+  controls.update();                  // needed for damping to work
+  renderer.render(scene, camera);
+}
+animate();
+
+</script>
+</body>
+</html>

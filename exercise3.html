@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes"/>
+  <title>Exercise 3 – Lighting & Shadows</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: monospace; }
+    canvas { display: block; }
+    #info {
+      position: absolute; top: 12px; left: 12px;
+      color: #ffffffcc; background: #00000066;
+      padding: 8px 14px; border-radius: 6px;
+      font-size: 13px; line-height: 1.6; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// =============================================================================
+// Exercise 3 – Lighting & Shadows
+// =============================================================================
+// This exercise builds directly on exercises 1 & 2 without rewriting anything.
+// The kitchen and lighting come from sceneSetup.js.
+// The robot comes from robot.js.
+//
+// What this file adds:
+//   - A dedicated GUI section exposing every meaningful light property
+//   - A SpotLightHelper to see the light cone in the viewport
+// =============================================================================
+
+import * as THREE from 'three';
+import { SpotLightHelper } from 'three';
+
+import {
+  scene, camera, renderer, controls, gui,
+  ambientLight, spotLight, fillLight,
+  counterTopMat
+} from './js/sceneSetup.js';
+
+import { buildRobot } from './js/robot.js';
+
+// =============================================================================
+// ROBOT
+// =============================================================================
+const robot = buildRobot(scene);
+
+// =============================================================================
+// SPOTLIGHT HELPER
+// =============================================================================
+// SpotLightHelper draws a wireframe cone showing exactly where the light
+// is pointing and how wide its beam is. Very useful for understanding how
+// SpotLight.angle and SpotLight.penumbra affect the scene.
+const spotHelper = new SpotLightHelper(spotLight);
+scene.add(spotHelper);
+
+// =============================================================================
+// GUI – Lighting controls
+// =============================================================================
+// The base GUI folders (Lighting, Counter top) already exist from sceneSetup.
+// Here we add an Exercise 3 folder that exposes the shadow-specific settings.
+
+const ex3Folder = gui.addFolder('Light & Shadow settings');
+
+// shadow.mapSize controls the resolution of the shadow texture.
+// Higher = sharper shadows but more GPU cost.
+// Must be a power of 2 (512, 1024, 2048, 4096).
+// Changing it at runtime requires renderer to rebuild the shadow map,
+// so we trigger that manually via onFinishChange.
+const shadowParams = { mapSize: 2048 };
+ex3Folder
+  .add(shadowParams, 'mapSize', [512, 1024, 2048, 4096])
+  .name('Shadow map size')
+  .onFinishChange(v => {
+    spotLight.shadow.mapSize.set(v, v);
+    // Force Three.js to rebuild the shadow map with the new resolution
+    spotLight.shadow.map?.dispose();
+    spotLight.shadow.map = null;
+  });
+
+// shadow.bias shifts the shadow slightly to avoid "shadow acne" —
+// the self-shadowing artefact that looks like dark stripes on surfaces.
+// Typical values are very small negatives like -0.001.
+ex3Folder
+  .add(spotLight.shadow, 'bias', -0.01, 0.01, 0.0001)
+  .name('Shadow bias');
+
+// SpotLight.angle is the half-angle of the cone in radians.
+// Smaller = tighter, more focused beam.
+ex3Folder
+  .add(spotLight, 'angle', 0.05, Math.PI / 3, 0.01)
+  .name('Spot cone angle')
+  .onChange(() => spotHelper.update()); // helper must refresh when angle changes
+
+// SpotLight.penumbra controls how soft the edge of the cone is.
+// 0 = hard edge, 1 = fully soft/blurred edge.
+ex3Folder
+  .add(spotLight, 'penumbra', 0, 1, 0.01)
+  .name('Spot penumbra');
+
+// Toggle the helper on/off so we can compare with and without it
+const helperParams = { showHelper: true };
+ex3Folder
+  .add(helperParams, 'showHelper')
+  .name('Show light helper')
+  .onChange(v => spotHelper.visible = v);
+
+ex3Folder.open();
+
+// Robot material folder – lets marker see castShadow is working correctly
+const robotFolder = gui.addFolder('Robot material');
+// We reference the material directly from the imported module
+// (same object reference, so changes apply immediately)
+robotFolder.add(counterTopMat, 'roughness', 0, 1, 0.01).name('Counter roughness');
+robotFolder.open();
+
+// =============================================================================
+// RENDER LOOP
+// =============================================================================
+// SpotLightHelper must be updated every frame because the light can move.
+
+function animate() {
+  renderer.setAnimationLoop(animate);
+  controls.update();
+
+  // Keep the helper in sync with the light each frame
+  spotHelper.update();
+
+  // Idle arm animation (same as exercise 2)
+  const t = Date.now() * 0.001;
+  robot.rightArm.shoulderPivot.rotation.x = Math.sin(t * 0.8) * 0.5 - 0.6;
+  robot.rightArm.elbowPivot.rotation.x    = Math.sin(t * 0.8 + 1) * 0.3 + 0.4;
+  robot.leftArm.shoulderPivot.rotation.x  = Math.sin(t * 0.6 + 0.5) * 0.4 - 0.5;
+  robot.leftArm.elbowPivot.rotation.x     = Math.sin(t * 0.6 + 1.5) * 0.25 + 0.35;
+
+  renderer.render(scene, camera);
+}
+animate();
+
+</script>
+</body>
+</html>

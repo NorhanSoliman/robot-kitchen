@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Exercise 4 – FK Animation & Interaction</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; font-family: monospace; }
+    canvas { display: block; }
+    #info {
+      position: absolute; top: 12px; left: 12px;
+      color: #ffffffcc; background: #00000066;
+      padding: 8px 14px; border-radius: 6px;
+      font-size: 13px; line-height: 1.6; pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three":         "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+// =============================================================================
+// Exercise 4 – Animation & Interaction
+// =============================================================================
+// New concepts introduced here:
+//
+//   1. Forward Kinematics (FK): driving joint angles with Math.sin() to
+//      produce smooth, looping motion. The hand position is never set directly;
+//      it falls out of the shoulder + elbow angles automatically.
+//
+//   2. A "chopping" motion: a deliberate kitchen task animation showing
+//      the robot reaching forward and pushing down repeatedly.
+//
+//   3. GUI joint sliders: pause the auto-animation and control each joint
+//      manually to understand exactly how the hierarchy works.
+//
+//   4. OrbitControls: already provided by sceneSetup.js, no extra work.
+// =============================================================================
+
+import * as THREE from 'three';
+import { scene, camera, renderer, controls, gui } from './js/sceneSetup.js';
+import { buildRobot } from './js/robot.js';
+
+// =============================================================================
+// ROBOT
+// =============================================================================
+const robot = buildRobot(scene);
+
+// =============================================================================
+// FK: understanding the maths before writing it
+// =============================================================================
+// Math.sin(t) produces a value that oscillates smoothly between -1 and +1.
+//
+// To control a joint we need three things:
+//   • Centre: the resting angle the joint returns to
+//   • Range: how far it swings either side (amplitude)
+//   • Speed: how fast it oscillates (frequency, multiplied into t)
+//
+// Formula:  angle = centre + Math.sin(t * speed) * range
+//
+// Example – shoulder reaching forward then back:
+//   centre = -0.7  (arm angled forward over the counter)
+//   range  =  0.4  (swings ±0.4 rad ≈ ±23°)
+//   speed  =  1.5  (one full cycle every ~4 seconds)
+//   → angle = -0.7 + Math.sin(t * 1.5) * 0.4
+//
+// The elbow is driven by the SAME sin wave but with a phase offset (+1.2).
+// A phase offset shifts the wave in time so the elbow bends slightly AFTER
+// the shoulder moves which is much more natural than both moving in perfect sync.
+//   → elbowAngle = 0.5 + Math.sin(t * 1.5 + 1.2) * 0.35
+
+// =============================================================================
+// GUI
+// =============================================================================
+// Two modes:
+//   • Auto  : the sin-wave animation plays (default)
+//   • Manual : animation pauses, sliders take full control
+//
+// This separation is important: if auto-animation and sliders both write
+// to the same rotation at once, they fight each other and the result is
+// confusing. The 'autoAnimate' flag picks one source of truth per frame.
+
+const params = {
+  autoAnimate: true,
+
+  // Manual slider values (only used when autoAnimate = false)
+  rightShoulder: -0.7,
+  rightElbow:     0.5,
+  leftShoulder:  -0.5,
+  leftElbow:      0.35,
+};
+
+const fkFolder = gui.addFolder('FK Animation');
+
+fkFolder.add(params, 'autoAnimate').name('Auto animate');
+
+// Sliders — visually "greyed out" when autoAnimate is on via the listen()
+// call that keeps them in sync with the computed value each frame
+const sliderRS = fkFolder.add(params, 'rightShoulder', -Math.PI, 0,        0.01).name('R shoulder');
+const sliderRE = fkFolder.add(params, 'rightElbow',     0,        Math.PI,  0.01).name('R elbow');
+const sliderLS = fkFolder.add(params, 'leftShoulder',  -Math.PI, 0,        0.01).name('L shoulder');
+const sliderLE = fkFolder.add(params, 'leftElbow',      0,        Math.PI,  0.01).name('L elbow');
+
+// listen() makes each slider reflect the current value every frame,
+// so when autoAnimate is on we can WATCH the angles change in real time.
+// This is very helpful for understanding what values produce what poses.
+sliderRS.listen();
+sliderRE.listen();
+sliderLS.listen();
+sliderLE.listen();
+
+fkFolder.open();
+
+// =============================================================================
+// RENDER LOOP
+// =============================================================================
+function animate() {
+  renderer.setAnimationLoop(animate);
+  controls.update();
+
+  const t = Date.now() * 0.001; // seconds
+
+  if (params.autoAnimate) {
+    // ── Right arm: chopping ──────────────────────────────────────────────────
+    // Shoulder swings forward/back in a narrow arc above the counter.
+    // Math.max() clamps the bottom of the swing so the hand never dips
+    // below the counter surface  it "bounces" back up at the lowest point,
+    const chop = Math.sin(t * 2.5);            // -1 to +1, fast
+    params.rightShoulder = -1.5 + Math.max(0, chop) * 0.35;
+    //                      ↑ resting forward    ↑ only swings on the UP half
+    //                                             DOWN half is clamped to 0
+    params.rightElbow    =  -0.25 + Math.max(0, chop) * 0.2;
+    // Elbow also bends a little more on the up-stroke, stays
+    // extended when pushing down, giving a natural hinge feel.
+
+    // ── Left arm: fixed hold pose ────────────────────────────────────────────
+    // Arm reaches straight forward and slightly down, holding steady.
+    // No animation it just sits there as if pressing down on the food.
+    params.leftShoulder = -1.25;
+    params.leftElbow    =  0.1;
+
+  }
+
+  // Apply params → joint rotations
+  // This runs whether autoAnimate is on (params was just computed above)
+  // or off (params holds the last slider value the user set).
+  robot.rightArm.shoulderPivot.rotation.x = params.rightShoulder;
+  robot.rightArm.elbowPivot.rotation.x    = params.rightElbow;
+
+  robot.leftArm.shoulderPivot.rotation.x  = params.leftShoulder;
+  robot.leftArm.elbowPivot.rotation.x     = params.leftElbow;
+
+  robot.rightArm.shoulderPivot.rotation.z = -0.3; // tilt right arm inward
+  robot.leftArm.shoulderPivot.rotation.z  =  0.2; // tilt left arm inward
+
+  renderer.render(scene, camera);
+}
+animate();
+
+</script>
+</body>
+</html>

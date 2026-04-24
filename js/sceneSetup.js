@@ -172,11 +172,11 @@ scene.add(plate);
 
 // Bread roll
 const roll = new THREE.Mesh(
-  new THREE.SphereGeometry(0.09, 16, 10),
+  new THREE.SphereGeometry(0.15, 16, 10),
   makeMat(0xd4a56a, 0.9, 0.0)
 );
-roll.scale.y = 0.65;
-roll.position.set(0.5, COUNTER_Y + 0.07, -2);
+roll.scale.y = 0.70;
+roll.position.set(0, COUNTER_Y + 0.07, -2.25); // put bread on the cutting board
 roll.castShadow = true;
 scene.add(roll);
 
@@ -185,7 +185,7 @@ const board = new THREE.Mesh(
   new THREE.BoxGeometry(0.45, 0.018, 0.3),
   makeMat(0x9c6b3c, 0.95, 0.0)
 );
-board.position.set(-0.15, COUNTER_Y + 0.009, -1.75);
+board.position.set(0, COUNTER_Y + 0.009, -2.25);
 board.castShadow = board.receiveShadow = true;
 scene.add(board);
 
